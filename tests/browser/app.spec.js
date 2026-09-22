@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test';
+import { copyFile, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 async function configureNetwork(page) {
   // O dataset é servido pelo app. Apenas o TF.js do CDN é substituído pela cópia local.
@@ -28,6 +31,28 @@ async function openApp(page) {
   await expect(page.locator('#train')).toBeEnabled();
   await expect(page.locator('#status')).toContainText('Modelo pronto');
   expect(externalRequests).toEqual([]);
+}
+
+async function openStandalone(page) {
+  // Copia apenas o HTML para outro diretório, sem arquivos auxiliares ao lado.
+  const file = test.info().outputPath('standalone.html');
+  await mkdir(dirname(file), { recursive: true });
+  await copyFile(new URL('../../dist/autoencoder.html', import.meta.url), file);
+  const url = pathToFileURL(file).href;
+  const unexpectedRequests = [];
+  page.on('request', (request) => {
+    if (request.url() !== url && !request.url().startsWith('data:')) {
+      unexpectedRequests.push(request.url());
+    }
+  });
+  await page.context().setOffline(true);
+  await page.goto(url);
+  await expect(page.locator('script[src], link[rel="stylesheet"]')).toHaveCount(
+    0,
+  );
+  await expect(page.locator('#train')).toBeEnabled();
+  await expect(page.locator('#status')).toContainText('Modelo pronto');
+  return unexpectedRequests;
 }
 
 test('orienta a obter os objetos quando o checkout contém apenas ponteiros LFS', async ({
@@ -82,98 +107,107 @@ async function thumbnailPositions(page) {
   });
 }
 
-test('carrega os dados reais, explora, interpola, treina, para e recria', async ({
-  page,
-}) => {
-  const errors = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  await openApp(page);
-  await page.locator('#samples').selectOption('10');
-  await expect(page.locator('#train')).toBeEnabled();
-  const original = await page
-    .locator('#inputCanvas')
-    .evaluate((canvas) => canvas.toDataURL());
-  await page.locator('#next').click();
-  await expect
-    .poll(() =>
-      page.locator('#inputCanvas').evaluate((canvas) => canvas.toDataURL()),
-    )
-    .not.toBe(original);
+for (const mode of ['servidor', 'HTML único offline']) {
+  test(`carrega, explora, interpola, treina e recria — ${mode}`, async ({
+    page,
+  }) => {
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    const unexpectedRequests =
+      mode === 'servidor' ? [] : await openStandalone(page);
+    if (mode === 'servidor') await openApp(page);
+    await page.locator('#samples').selectOption('10');
+    await expect(page.locator('#train')).toBeEnabled();
+    const original = await page
+      .locator('#inputCanvas')
+      .evaluate((canvas) => canvas.toDataURL());
+    await page.locator('#next').click();
+    await expect
+      .poll(() =>
+        page.locator('#inputCanvas').evaluate((canvas) => canvas.toDataURL()),
+      )
+      .not.toBe(original);
 
-  await page.locator('#zoomIn').click();
-  await expect(page.locator('#zoomReadout')).toHaveText('135%');
-  await page.locator('#zoomReset').click();
-  await expect(page.locator('#zoomReadout')).toHaveText('100%');
+    await page.locator('#zoomIn').click();
+    await expect(page.locator('#zoomReadout')).toHaveText('135%');
+    await page.locator('#zoomReset').click();
+    await expect(page.locator('#zoomReadout')).toHaveText('100%');
 
-  const canvas = page.locator('#embeddingCanvas');
-  await canvas.scrollIntoViewIfNeeded();
-  const bounds = await canvas.boundingBox();
-  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 100);
-  await page.mouse.wheel(0, -200);
-  await expect(page.locator('#zoomReadout')).not.toHaveText('100%');
-  await page.locator('#zoomReset').click();
-  const beforePan = await canvas.evaluate((element) => element.toDataURL());
-  await canvas.scrollIntoViewIfNeeded();
-  const panBounds = await canvas.boundingBox();
-  await page.mouse.move(panBounds.x + 50, panBounds.y + 50);
-  await page.mouse.down();
-  await page.mouse.move(panBounds.x + 90, panBounds.y + 90, { steps: 5 });
-  await page.mouse.up();
-  await expect
-    .poll(() => canvas.evaluate((element) => element.toDataURL()))
-    .not.toBe(beforePan);
-  await page.locator('#zoomReset').click();
+    const canvas = page.locator('#embeddingCanvas');
+    await canvas.scrollIntoViewIfNeeded();
+    const bounds = await canvas.boundingBox();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 100);
+    await page.mouse.wheel(0, -200);
+    await expect(page.locator('#zoomReadout')).not.toHaveText('100%');
+    await page.locator('#zoomReset').click();
+    const beforePan = await canvas.evaluate((element) => element.toDataURL());
+    await canvas.scrollIntoViewIfNeeded();
+    const panBounds = await canvas.boundingBox();
+    await page.mouse.move(panBounds.x + 50, panBounds.y + 50);
+    await page.mouse.down();
+    await page.mouse.move(panBounds.x + 90, panBounds.y + 90, { steps: 5 });
+    await page.mouse.up();
+    await expect
+      .poll(() => canvas.evaluate((element) => element.toDataURL()))
+      .not.toBe(beforePan);
+    await page.locator('#zoomReset').click();
 
-  const points = await thumbnailPositions(page);
-  await page.locator('#embeddingCanvas').click({ position: points[0] });
-  await expect(page.locator('#latentInfo')).toContainText('Amostra real');
-  await page.locator('#embeddingCanvas').click({ position: { x: 5, y: 5 } });
-  await expect(page.locator('#latentInfo')).toContainText('Saída do decoder');
-  await page.locator('#interpolateModeBtn').click();
-  await page.locator('#embeddingCanvas').click({ position: points[0] });
-  await page.locator('#embeddingCanvas').click({ position: points[1] });
-  await expect(page.locator('#interpSlider')).toBeEnabled();
-  await expect(page.locator('#interpWeight')).toHaveText('A 50%  •  B 50%');
-  await page.locator('#interpSlider').fill('25');
-  await expect(page.locator('#interpWeight')).toHaveText('A 75%  •  B 25%');
-  await page.locator('#interpPlayBtn').click();
-  await expect(page.locator('#interpInfo')).toContainText('movimento reduzido');
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await page.locator('#interpPlayBtn').click();
-  await expect(page.locator('#interpPlayBtn')).toHaveText('Pausar animação');
-  await expect(page.locator('#interpSlider')).not.toHaveValue('25');
-  await page.locator('#interpPlayBtn').click();
-  await expect(page.locator('#interpPlayBtn')).toHaveText('Animar A ↔ B');
+    const points = await thumbnailPositions(page);
+    await page.locator('#embeddingCanvas').click({ position: points[0] });
+    await expect(page.locator('#latentInfo')).toContainText('Amostra real');
+    await page.locator('#embeddingCanvas').click({ position: { x: 5, y: 5 } });
+    await expect(page.locator('#latentInfo')).toContainText('Saída do decoder');
+    await page.locator('#interpolateModeBtn').click();
+    await page.locator('#embeddingCanvas').click({ position: points[0] });
+    await page.locator('#embeddingCanvas').click({ position: points[1] });
+    await expect(page.locator('#interpSlider')).toBeEnabled();
+    await expect(page.locator('#interpWeight')).toHaveText('A 50%  •  B 50%');
+    await page.locator('#interpSlider').fill('25');
+    await expect(page.locator('#interpWeight')).toHaveText('A 75%  •  B 25%');
+    await page.locator('#interpPlayBtn').click();
+    await expect(page.locator('#interpInfo')).toContainText(
+      'movimento reduzido',
+    );
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.locator('#interpPlayBtn').click();
+    await expect(page.locator('#interpPlayBtn')).toHaveText('Pausar animação');
+    await expect(page.locator('#interpSlider')).not.toHaveValue('25');
+    await page.locator('#interpPlayBtn').click();
+    await expect(page.locator('#interpPlayBtn')).toHaveText('Animar A ↔ B');
 
-  await page.locator('#epochs').selectOption('100');
-  await page.locator('#train').click();
-  await expect(page.locator('#loss')).not.toHaveText('—');
-  await page.locator('#stop').click();
-  await expect(page.locator('#status')).toHaveText('Treino interrompido.');
-  await expect(page.locator('#train')).toBeEnabled();
-  await page.locator('#reset').click();
-  await expect(page.locator('#train')).toBeEnabled();
-  await expect(page.locator('#epoch')).toHaveText('0');
-  await expect(page.locator('#interpSlider')).toBeDisabled();
-  await page.locator('#train').click();
-  await expect(page.locator('#status')).toHaveText('Treino concluído.');
-  await expect(page.locator('#epoch')).toHaveText('100/100');
-  await page.locator('#latent').fill('2');
-  await page.locator('#latent').dispatchEvent('change');
-  await expect(page.locator('#train')).toBeEnabled();
-  await expect(page.locator('#status')).toHaveText(
-    'Modelo pronto: 784 → 128 → 2 → 128 → 784',
-  );
-  const tensorCount = await page.evaluate(() => window.tf.memory().numTensors);
-  for (let cycle = 0; cycle < 3; cycle++) {
+    await page.locator('#epochs').selectOption('100');
+    await page.locator('#train').click();
+    await expect(page.locator('#loss')).not.toHaveText('—');
+    await page.locator('#stop').click();
+    await expect(page.locator('#status')).toHaveText('Treino interrompido.');
+    await expect(page.locator('#train')).toBeEnabled();
     await page.locator('#reset').click();
     await expect(page.locator('#train')).toBeEnabled();
-    expect(await page.evaluate(() => window.tf.memory().numTensors)).toBe(
-      tensorCount,
+    await expect(page.locator('#epoch')).toHaveText('0');
+    await expect(page.locator('#interpSlider')).toBeDisabled();
+    await page.locator('#train').click();
+    await expect(page.locator('#status')).toHaveText('Treino concluído.');
+    await expect(page.locator('#epoch')).toHaveText('100/100');
+    await page.locator('#latent').fill('2');
+    await page.locator('#latent').dispatchEvent('change');
+    await expect(page.locator('#train')).toBeEnabled();
+    await expect(page.locator('#status')).toHaveText(
+      'Modelo pronto: 784 → 128 → 2 → 128 → 784',
     );
-  }
-  expect(errors).toEqual([]);
-});
+    const tensorCount = await page.evaluate(
+      () => window.tf.memory().numTensors,
+    );
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await page.locator('#reset').click();
+      await expect(page.locator('#train')).toBeEnabled();
+      expect(await page.evaluate(() => window.tf.memory().numTensors)).toBe(
+        tensorCount,
+      );
+    }
+    expect(errors).toEqual([]);
+    expect(unexpectedRequests).toEqual([]);
+  });
+}
 
 test('mantém a página utilizável em telas pequenas e no endereço antigo', async ({
   page,

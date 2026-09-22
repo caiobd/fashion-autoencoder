@@ -16,6 +16,20 @@ Abra **http://127.0.0.1:8000**. Não é necessário instalar dependências npm p
 
 A página também pode ser publicada em qualquer hospedagem estática, copiando `index.html`, `src/`, `styles/` e `data/`. Execute `git lfs pull` antes de copiar os arquivos: a publicação precisa conter os arquivos `.gz` completos, não os ponteiros de texto do LFS. O arquivo HTML com o nome antigo redireciona para `index.html` e pode ser incluído para preservar links existentes.
 
+## Gerar um HTML único
+
+```sh
+npm ci
+git lfs pull
+npm run build
+```
+
+O comando gera **`dist/autoencoder.html`**, com cerca de 7,5 MiB. Esse arquivo inclui a interface, os estilos, o JavaScript, o TensorFlow.js e os dois arquivos gzip do Fashion-MNIST. Pode ser aberto diretamente no navegador, inclusive por `file://`, sem servidor, instalação ou conexão com a internet. O navegador ainda precisa oferecer `DecompressionStream`.
+
+Depois de instalar as dependências e obter os objetos LFS, o próprio build também funciona sem internet. Os arquivos do dataset são incorporados sem recompressão, como data URLs. O esbuild reúne os módulos JavaScript e inclui a versão do TensorFlow.js instalada pelo `package-lock.json`. As licenças do TensorFlow.js e do dataset ficam embutidas no HTML, sem alterar a interface.
+
+Continue editando os arquivos de `src/`, `styles/` e `index.html`, e rode `npm run build` novamente para atualizar a distribuição. `dist/` é gerado e ignorado pelo Git. Compartilhe apenas `dist/autoencoder.html`; os destinatários não precisam do restante do repositório.
+
 ## Organização
 
 ```text
@@ -25,7 +39,8 @@ data/fashion-mnist/           Dataset em Git LFS, origem, hashes e licença
 src/
   main.js                    Inicialização do navegador
   app.js                     Carregamento, criação, treino e controles
-  data/fashion-mnist.js      Download, leitura IDX e seleção de amostras
+  data/fashion-mnist.js       Carregamento, leitura IDX e seleção de amostras
+  data/dataset-urls.js        Localização do dataset; embutido no build
   model/
     architecture.js          Definição da rede: arquivo de trabalho dos alunos
     autoencoder.js           Treino, inferência e descarte dos tensores
@@ -38,11 +53,14 @@ src/
     embedding-plot.js        Desenho das miniaturas, zoom e deslocamento
     embedding-explorer.js    Seleção, exploração e interpolação
 scripts/serve.js              Servidor local de desenvolvimento
+scripts/build.js              Geração do HTML único com esbuild
+licenses/                     Licença do TensorFlow.js incluída na distribuição
+dist/autoencoder.html         HTML independente gerado (ignorado pelo Git)
 tests/unit/                  Dados, matemática e contrato do modelo
 tests/browser/               Fluxos completos com Chromium e dados reais
 ```
 
-Os módulos usam JavaScript nativo, sem etapa de build. As regras de treino ficam no modelo; o aplicativo controla seu ciclo de vida; os módulos de interface cuidam dos elementos e canvases. PCA e leitura de IDX podem ser usados sem DOM ou TensorFlow.
+O desenvolvimento usa módulos JavaScript nativos, sem exigir build. A geração do HTML único é opcional. As regras de treino ficam no modelo; o aplicativo controla seu ciclo de vida; os módulos de interface cuidam dos elementos e canvases. PCA e leitura de IDX podem ser usados sem DOM ou TensorFlow.
 
 ## Modelo e dados
 
@@ -107,11 +125,11 @@ O modelo é dono dos tensores e do otimizador. A interface aguarda as leituras p
 npm ci
 npm run check             # ESLint, formatação e testes unitários
 npx playwright install chromium
-npm run test:browser      # Fluxos no navegador com os arquivos reais do Fashion-MNIST
+npm run test:browser      # Gera o HTML e testa os modos servidor e arquivo offline
 ```
 
 Se já tiver Chromium instalado, use `CHROMIUM_PATH=/caminho/para/chromium npm run test:browser`. Com as dependências, o Chromium e os objetos LFS presentes, os testes não precisam de rede externa: o dataset vem do servidor local e o TensorFlow.js vem da dependência local, na mesma versão do CDN. A CI faz checkout com `lfs: true`.
 
-Os testes verificam seleção e validação do dataset, projeção e inversa do PCA, equivalência entre reconstruir e executar encoder/decoder, interrupção e retomada do treino e liberação dos tensores. Os fluxos no navegador cobrem exploração, interpolação, zoom, treino, recriação, tela pequena e o endereço antigo.
+Os testes verificam seleção e validação do dataset, projeção e inversa do PCA, equivalência entre reconstruir e executar encoder/decoder, interrupção e retomada do treino e liberação dos tensores. Os fluxos no navegador cobrem exploração, interpolação, zoom, treino, recriação, tela pequena e o endereço antigo. O mesmo fluxo principal é executado no HTML único, copiado para outra pasta e aberto por `file://` com a rede desativada, verificando que nenhum arquivo auxiliar é solicitado.
 
 Use `npm run format` para aplicar a formatação. O workflow em `.github/workflows/check.yml` executa essas verificações em pushes e pull requests.
