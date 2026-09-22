@@ -2,6 +2,8 @@
 
 Demonstração para ensinar embeddings: um autoencoder aprende a reconstruir peças de roupa, enquanto a interface mostra uma projeção PCA do gargalo. É possível explorar pontos, comparar reconstruções e interpolar entre duas amostras.
 
+A versão publicada está disponível em **https://caiobd.github.io/fashion-autoencoder/**. O workflow `GitHub Pages` gera e publica o HTML único automaticamente a cada push na branch `main`.
+
 ## Executar
 
 Requer Node.js 22 ou superior, Git LFS para obter o dataset ao clonar o repositório e um navegador com suporte a módulos JavaScript e `DecompressionStream`.
