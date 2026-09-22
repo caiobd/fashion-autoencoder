@@ -1,0 +1,26 @@
+{
+  "name": "fashion-autoencoder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Demonstração interativa de embeddings com um autoencoder e Fashion-MNIST.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "test": "node --test tests/unit/*.test.js",
+    "test:browser": "playwright test",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run lint && npm run format:check && npm test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2",
+    "@tensorflow/tfjs": "4.22.0",
+    "eslint": "9.39.1",
+    "globals": "16.5.0",
+    "prettier": "3.7.4"
+  }
+}

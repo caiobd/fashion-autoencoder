@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Autoencoder Fashion-MNIST — TF.js</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+    <link rel="stylesheet" href="./styles/main.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Treinando um autoencoder</h1>
+      <p>
+        Vamos treinar o nosso autoencoder no conjunto Fashion-MNIST e ver se ele
+        aprende sozinho a organizar as roupas de forma que peças parecidas
+        fiquem próximas umas das outras.
+      </p>
+
+      <section class="card architectureCard">
+        <h2>Arquitetura</h2>
+        <p class="small">
+          Essa é a cara da rede que fizemos. Deixamos o gargalo como parâmetro
+          justamente para podermos brincar com ele.
+        </p>
+        <div class="flow">
+          <div
+            class="node archTooltip"
+            tabindex="0"
+            data-tooltip="Aqui é onde entra nossa imagem."
+          >
+            <b>784</b><span>entrada</span>
+          </div>
+          <div class="arrow">→</div>
+          <div
+            class="node archTooltip"
+            tabindex="0"
+            data-tooltip="Camada intermediária essencial para o encoding."
+          >
+            <b>128</b><span>GELU</span>
+          </div>
+          <div class="arrow">→</div>
+          <div
+            class="node archTooltip"
+            tabindex="0"
+            data-tooltip="É daqui que extraímos os embeddings, ou seja, é aqui que fica a descrição que o encoder manda para o decoder."
+          >
+            <b id="latentLabel">16</b><span>gargalo</span>
+          </div>
+          <div class="arrow">→</div>
+          <div
+            class="node archTooltip"
+            tabindex="0"
+            data-tooltip="Camada intermediária essencial para o decoding."
+          >
+            <b>128</b><span>GELU</span>
+          </div>
+          <div class="arrow">→</div>
+          <div
+            class="node archTooltip"
+            tabindex="0"
+            data-tooltip="É aqui que sai nossa imagem reconstruída."
+          >
+            <b>784</b><span>saída</span>
+          </div>
+        </div>
+        <div class="architectureParts" aria-label="Partes do autoencoder">
+          <div><b>Encoder</b><span>entrada → GELU → gargalo</span></div>
+          <div><b>Decoder</b><span>gargalo → GELU → saída</span></div>
+        </div>
+      </section>
+
+      <section class="card controls controlsCard">
+        <div>
+          <label>Gargalo: <span id="latentValue">16</span></label>
+          <input
+            id="latent"
+            type="range"
+            min="2"
+            max="32"
+            value="16"
+            step="1"
+          />
+        </div>
+
+        <div class="grid2">
+          <div>
+            <label for="samples">Amostras</label>
+            <select id="samples">
+              <option value="10">10 — memorizar</option>
+              <option value="100">100</option>
+              <option value="300" selected>300</option>
+              <option value="600">600</option>
+              <option value="1000">1000</option>
+              <option value="2000">2000</option>
+            </select>
+          </div>
+          <div>
+            <label for="epochs">Épocas</label>
+            <select id="epochs">
+              <option value="100">100</option>
+              <option value="300" selected>300</option>
+              <option value="500">500</option>
+              <option value="1000">1000</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <button id="reset">Recriar modelo</button>
+          <button id="train" class="primary">Treinar</button>
+        </div>
+        <button id="stop" disabled>Parar</button>
+
+        <div class="metrics">
+          <div
+            class="metric tooltip"
+            tabindex="0"
+            data-tooltip="A quantidade de vezes que mostramos o conjunto de dados para o nosso modelo."
+          >
+            <span>Época</span><b id="epoch">0</b>
+          </div>
+          <div
+            class="metric tooltip"
+            tabindex="0"
+            data-tooltip="Um valor que indica o quanto o nosso modelo está errando. Quanto menor, menor o erro. Mede a performance do encoder e do decoder em conjunto."
+          >
+            <span>Loss BCE</span><b id="loss">—</b>
+          </div>
+          <div
+            class="metric tooltip"
+            tabindex="0"
+            data-tooltip="A velocidade com que o nosso modelo está aprendendo. Quando está alta, ele aprende muito de uma vez, mas corre o risco de esquecer coisas que já aprendeu. Quando está baixa, consegue aprender detalhes, mas tem mais dificuldade para corrigir erros grosseiros."
+          >
+            <span>LR</span><b id="lr">—</b>
+          </div>
+        </div>
+        <div class="status" id="status">Carregando TensorFlow.js…</div>
+      </section>
+
+      <section class="card reconstructionCard">
+        <h2>Reconstrução</h2>
+        <div class="visuals">
+          <div class="canvasBox">
+            <canvas
+              id="inputCanvas"
+              class="img"
+              width="28"
+              height="28"
+            ></canvas>
+            <div class="caption">Original</div>
+          </div>
+          <div class="canvasBox">
+            <canvas
+              id="outputCanvas"
+              class="img"
+              width="28"
+              height="28"
+            ></canvas>
+            <div class="caption">Reconstrução da rede</div>
+          </div>
+        </div>
+        <button id="next">Trocar peça</button>
+      </section>
+
+      <section class="card embeddingCard">
+        <h2>Espaço de embeddings</h2>
+        <p class="small">
+          Usamos uma técnica chamada PCA para transformar esse espaço em 2D e
+          podermos espiar o que está acontecendo nele. A representação não é
+          perfeita, mas tenta manter próximas as coisas que já estavam próximas
+          e preservar o máximo possível da organização original.
+        </p>
+        <div class="embedToolbar">
+          <button id="zoomOut" type="button" aria-label="Diminuir zoom">
+            −
+          </button>
+          <button id="zoomIn" type="button" aria-label="Aumentar zoom">
+            +
+          </button>
+          <button id="zoomReset" type="button">Reset</button>
+          <span class="zoomReadout" id="zoomReadout">100%</span>
+        </div>
+        <canvas
+          id="embeddingCanvas"
+          class="embed"
+          width="1280"
+          height="620"
+        ></canvas>
+        <p class="small">
+          Use pinça/scroll para zoom e arraste para navegar. Escolha entre
+          explorar pontos ou interpolar duas amostras.
+        </p>
+
+        <div class="modeToolbar">
+          <button id="exploreModeBtn" type="button" class="active">
+            Explorar ponto
+          </button>
+          <button id="interpolateModeBtn" type="button">
+            Interpolar A ↔ B
+          </button>
+          <button id="clearSelectionBtn" type="button">Limpar seleção</button>
+        </div>
+
+        <div id="explorePanel" class="exploreGrid">
+          <div class="canvasBox">
+            <canvas
+              id="latentInputCanvas"
+              class="img"
+              width="28"
+              height="28"
+            ></canvas>
+            <div class="caption" id="latentInputCaption">
+              Amostra selecionada
+            </div>
+          </div>
+          <div class="canvasBox">
+            <canvas
+              id="latentCanvas"
+              class="img"
+              width="28"
+              height="28"
+            ></canvas>
+            <div class="caption" id="latentOutputCaption">
+              Reconstrução / ponto PCA
+            </div>
+          </div>
+          <div class="canvasBox exploreInfo">
+            <div class="small" id="latentInfo">
+              Toque numa miniatura para ampliá-la e ver sua reconstrução. Toque
+              no espaço vazio para decodificar aquele ponto usando o decoder.
+            </div>
+          </div>
+        </div>
+
+        <div id="interpolatePanel" class="hidden">
+          <div class="interpGrid">
+            <div class="canvasBox">
+              <canvas
+                id="interpACanvas"
+                class="img"
+                width="28"
+                height="28"
+              ></canvas>
+              <div class="caption">Amostra A</div>
+            </div>
+            <div class="canvasBox interpCenter">
+              <canvas
+                id="interpResultCanvas"
+                class="img"
+                width="28"
+                height="28"
+              ></canvas>
+              <div class="caption">Interpolação decodificada</div>
+            </div>
+            <div class="canvasBox">
+              <canvas
+                id="interpBCanvas"
+                class="img"
+                width="28"
+                height="28"
+              ></canvas>
+              <div class="caption">Amostra B</div>
+            </div>
+          </div>
+
+          <div class="interpSlider">
+            <input
+              id="interpSlider"
+              type="range"
+              min="0"
+              max="100"
+              value="50"
+              step="1"
+              disabled
+            />
+            <div class="interpEnds"><span>100% A</span><span>100% B</span></div>
+            <div class="interpWeight" id="interpWeight">
+              Selecione duas miniaturas
+            </div>
+            <button id="interpPlayBtn" type="button" disabled>
+              Animar A ↔ B
+            </button>
+          </div>
+          <p class="small" id="interpInfo">
+            No modo de interpolação, toque em uma miniatura para A e depois em
+            outra para B.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
