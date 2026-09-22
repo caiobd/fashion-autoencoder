@@ -1,44 +1,24 @@
-import { createGeluLayer } from './gelu.js';
+import { createAutoencoderModels } from './architecture.js';
 import { cosineLR } from './learning-rate.js';
 
 /**
- * Autoencoder 784 → 128 → gargalo → 128 → 784.
+ * Treino e inferência da arquitetura definida em architecture.js.
  * Recebe e devolve arrays; todos os tensores e pesos pertencem à classe.
  * Não conhece DOM, Fashion-MNIST ou a projeção PCA.
  */
 export class Autoencoder {
-  constructor(tf, latentDimensions = 16) {
+  constructor(tf, embeddingSize = 16) {
     this.tf = tf;
-    this.latentDimensions = Math.max(
-      2,
-      Math.min(32, Math.floor(latentDimensions)),
-    );
+    this.embeddingSize = Math.max(2, Math.min(32, Math.floor(embeddingSize)));
     this.training = false;
     this.stopRequested = false;
-    const dense = (units, options = {}) =>
-      tf.layers.dense({
-        units,
-        kernelInitializer: tf.initializers.glorotNormal({ seed: 42 }),
-        ...options,
-      });
-
-    const input = tf.input({ shape: [784] });
-    const hidden = createGeluLayer(tf).apply(dense(128).apply(input));
-    const embedding = dense(this.latentDimensions, {
-      name: 'bottleneck',
-    }).apply(hidden);
-
-    this.decoderLayers = [
-      dense(128),
-      createGeluLayer(tf),
-      dense(784, { activation: 'sigmoid' }),
-    ];
-    const output = this.decoderLayers.reduce(
-      (tensor, layer) => layer.apply(tensor),
-      embedding,
+    const { encoder, decoder, model } = createAutoencoderModels(
+      tf,
+      this.embeddingSize,
     );
-    this.model = tf.model({ inputs: input, outputs: output });
-    this.encoder = tf.model({ inputs: input, outputs: embedding });
+    this.encoder = encoder;
+    this.decoder = decoder;
+    this.model = model;
     this.optimizer = tf.train.adam(0.002);
     this.model.compile({
       optimizer: this.optimizer,
@@ -73,9 +53,8 @@ export class Autoencoder {
   /** @returns {Promise<Float32Array>} Imagem gerada a partir de um vetor do gargalo. */
   async decode(embedding) {
     const output = this.tf.tidy(() =>
-      this.decoderLayers.reduce(
-        (tensor, layer) => layer.apply(tensor),
-        this.tf.tensor2d(embedding, [1, this.latentDimensions]),
+      this.decoder.predict(
+        this.tf.tensor2d(embedding, [1, this.embeddingSize]),
       ),
     );
     try {
@@ -125,8 +104,8 @@ export class Autoencoder {
   dispose() {
     if (this.training)
       throw new Error('Encerre o treino antes de descartar o modelo.');
-    // Encoder e modelo completo compartilham as mesmas camadas. Liberá-las
-    // pelo modelo completo evita descartar os pesos compartilhados duas vezes.
+    // O modelo composto também libera os submodelos encoder e decoder.
+    // Descartá-los separadamente liberaria os mesmos pesos duas vezes.
     this.model.dispose();
     this.optimizer.dispose();
   }

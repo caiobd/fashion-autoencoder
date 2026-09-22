@@ -39,7 +39,7 @@
             tabindex="0"
             data-tooltip="Camada intermediária essencial para o encoding."
           >
-            <b>128</b><span>GELU</span>
+            <b>128</b><span>ReLU</span>
           </div>
           <div class="arrow">→</div>
           <div
@@ -55,7 +55,7 @@
             tabindex="0"
             data-tooltip="Camada intermediária essencial para o decoding."
           >
-            <b>128</b><span>GELU</span>
+            <b>128</b><span>ReLU</span>
           </div>
           <div class="arrow">→</div>
           <div
@@ -67,8 +67,8 @@
           </div>
         </div>
         <div class="architectureParts" aria-label="Partes do autoencoder">
-          <div><b>Encoder</b><span>entrada → GELU → gargalo</span></div>
-          <div><b>Decoder</b><span>gargalo → GELU → saída</span></div>
+          <div><b>Encoder</b><span>entrada → ReLU → gargalo</span></div>
+          <div><b>Decoder</b><span>gargalo → ReLU → saída</span></div>
         </div>
       </section>
 

@@ -27,8 +27,8 @@ src/
   app.js                     Carregamento, criação, treino e controles
   data/fashion-mnist.js      Download, leitura IDX e seleção de amostras
   model/
-    autoencoder.js           Rede, treino, inferência e descarte dos tensores
-    gelu.js                  Ativação GELU
+    architecture.js          Definição da rede: arquivo de trabalho dos alunos
+    autoencoder.js           Treino, inferência e descarte dos tensores
     learning-rate.js         Decaimento cosseno da taxa de aprendizado
   math/projection.js         PCA, alinhamento e inversa da projeção
   ui/
@@ -46,15 +46,41 @@ Os módulos usam JavaScript nativo, sem etapa de build. As regras de treino fica
 
 ## Modelo e dados
 
-A arquitetura foi preservada: **784 → 128 (GELU) → gargalo linear → 128 (GELU) → 784 (sigmoid)**. O gargalo varia de 2 a 32 dimensões. O treino usa Adam, binary cross-entropy, batches de até 32 amostras, inicialização Glorot normal com seed 42 e taxa de aprendizado com decaimento cosseno de 0,002 a 0,00005. A ordem das amostras não é embaralhada.
+A arquitetura é **784 → 128 (ReLU) → gargalo linear → 128 (ReLU) → 784 (sigmoid)**. O gargalo varia de 2 a 32 dimensões. As ativações são nativas do TensorFlow.js e configuradas diretamente nas camadas densas. O treino usa Adam, binary cross-entropy, batches de até 32 amostras, inicialização padrão do TensorFlow.js sem seed fixa e taxa de aprendizado com decaimento cosseno de 0,002 a 0,00005. A ordem das amostras não é embaralhada.
 
 O repositório inclui os mesmos arquivos do [Fashion-MNIST](https://github.com/zalandoresearch/fashion-mnist): `t10k-images-idx3-ubyte.gz` e `t10k-labels-idx1-ubyte.gz`, em `data/fashion-mnist/`, rastreados pelo Git LFS. O navegador os carrega da própria aplicação, sem consultar o GitHub. A [documentação do dataset](data/fashion-mnist/README.md) registra a origem, os hashes SHA-256 e a licença. Esse split tem 10 mil imagens de 28 × 28 pixels. Aqui ele é usado para a demonstração de treino, como na versão original; a aplicação não faz uma avaliação separada de generalização.
 
 Os pixels são normalizados para `[0, 1]`. A seleção alterna entre as dez classes e usa passo determinístico 37 dentro de cada classe. Os labels servem para selecionar e colorir as amostras, sem participar da função de perda. A visualização acompanha até 80 amostras, aplica PCA e alinha as projeções sucessivas por rotação para reduzir mudanças de orientação durante o treino.
 
+## Onde os alunos editam o modelo
+
+A definição da rede está em [`src/model/architecture.js`](src/model/architecture.js). Esse é o arquivo de trabalho dos alunos. **A implementação continua completa nesta versão.**
+
+Usamos a [API Layers do TensorFlow.js, inspirada no Keras](https://www.tensorflow.org/js/guide/layers_for_keras_users), para manter a execução no navegador. O encoder e o decoder são modelos `tf.sequential()` com listas explícitas de camadas `tf.layers`. Cada lista começa com `tf.layers.inputLayer()`: a entrada do encoder tem 784 pixels, e a do decoder tem `embeddingSize` valores. A API funcional `tf.model()` compõe os dois em um autoencoder com pesos compartilhados.
+
+Para experimentar outra arquitetura, altere as camadas nas listas `layers`: quantidade de unidades, ativações ou camadas intermediárias. Para trocar uma ativação, edite a propriedade `activation` da camada densa. Preserve o contrato de entrada e saída:
+
+- O encoder recebe 784 pixels e devolve `embeddingSize` valores.
+- O decoder recebe `embeddingSize` valores e devolve 784 pixels em `[0, 1]`.
+- O modelo completo usa as mesmas instâncias de encoder e decoder, para que o treino atualize os pesos usados na exploração e na interpolação.
+
+O arquivo de definição não trata de DOM, dataset, otimizador, callbacks de treino ou gerenciamento de tensores. Esses detalhes ficam em `autoencoder.js` e nos demais módulos. O diagrama do HTML ilustra a arquitetura de referência 784 → 128 → gargalo → 128 → 784; ele não é gerado automaticamente a partir das camadas.
+
+É possível inspecionar a definição diretamente, sem inicializar a aplicação:
+
+```js
+import { createAutoencoderModels } from './src/model/architecture.js';
+
+const { encoder, decoder, model } = createAutoencoderModels(tf, 16);
+encoder.summary();
+decoder.summary();
+model.summary();
+model.dispose(); // Também libera os submodelos compartilhados.
+```
+
 ## Contrato do autoencoder
 
-`src/model/autoencoder.js` concentra a implementação que poderá virar exercício na próxima etapa. **Nesta versão, ela está completa.**
+A classe `Autoencoder`, em `src/model/autoencoder.js`, adapta os modelos para a interface e mantém as operações de treino e inferência:
 
 ```js
 const model = new Autoencoder(tf, 16);
@@ -73,7 +99,7 @@ model.dispose();
 
 `images` é um array de imagens, cada uma um `Float32Array` de 784 pixels. `encode` devolve arrays de números; `reconstruct` e `decode` devolvem `Float32Array`. Os callbacks de treino podem ser assíncronos. `stop()` solicita interrupção ao final da época atual; outra chamada a `train()` continua com os pesos existentes.
 
-O modelo é dono dos tensores e do otimizador. A interface aguarda as leituras pendentes antes de chamar `dispose()` ao recriar a rede. O encoder e o modelo completo compartilham pesos, que são descartados uma única vez. A interpolação acontece nos vetores completos do gargalo; clicar no espaço vazio reconstrói um vetor restrito ao plano do PCA.
+O modelo é dono dos tensores e do otimizador. A interface aguarda as leituras pendentes antes de chamar `dispose()` ao recriar a rede. O modelo composto descarta os submodelos encoder e decoder; não os descarte novamente. A interpolação acontece nos vetores completos do gargalo; clicar no espaço vazio reconstrói um vetor restrito ao plano do PCA.
 
 ## Desenvolvimento e verificações
 

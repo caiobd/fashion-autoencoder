@@ -46,23 +46,38 @@ test('orienta a obter os objetos quando o checkout contém apenas ponteiros LFS'
 });
 
 async function thumbnailPositions(page) {
-  // Obtém a projeção pela API pública do modelo, sem expor estado de teste na aplicação.
-  return page.evaluate(async () => {
-    const { Autoencoder } = await import('/src/model/autoencoder.js');
-    const { loadFashionMnist, selectSamples } =
-      await import('/src/data/fashion-mnist.js');
-    const { pca2Model } = await import('/src/math/projection.js');
-    const samples = selectSamples(await loadFashionMnist(), 10);
-    const model = new Autoencoder(window.tf, 16);
-    const pca = pca2Model(await model.encode(samples.images));
-    model.dispose();
+  // Localiza duas bordas coloridas no desenho real, sem depender da inicialização dos pesos.
+  return page.evaluate(() => {
     const canvas = document.getElementById('embeddingCanvas');
     const rect = canvas.getBoundingClientRect();
-    const max = Math.max(...pca.points.flat().map(Math.abs));
-    const scale = (0.42 * Math.min(canvas.width, canvas.height)) / max;
-    return pca.points.map(([x, y]) => ({
-      x: ((canvas.width / 2 + x * scale) * rect.width) / canvas.width,
-      y: ((canvas.height / 2 - y * scale) * rect.height) / canvas.height,
+    const pixels = canvas
+      .getContext('2d')
+      .getImageData(0, 0, canvas.width, canvas.height).data;
+    let first = null;
+    let farthest = null;
+    let maxDistance = 0;
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      const [red, green, blue] = pixels.subarray(offset, offset + 3);
+      // Imagens são cinza; fundo e eixos têm pouca diferença entre os canais.
+      if (Math.max(red, green, blue) - Math.min(red, green, blue) <= 50)
+        continue;
+      const x = (offset / 4) % canvas.width;
+      const y = Math.floor(offset / 4 / canvas.width);
+      first ??= { x, y };
+      const distance = (x - first.x) ** 2 + (y - first.y) ** 2;
+      if (distance > maxDistance) {
+        maxDistance = distance;
+        farthest = { x, y };
+      }
+    }
+    if (!first || !farthest || maxDistance < 40 ** 2) {
+      throw new Error(
+        'Não foram encontradas duas miniaturas separadas no canvas.',
+      );
+    }
+    return [first, farthest].map(({ x, y }) => ({
+      x: ((x + 0.5) * rect.width) / canvas.width,
+      y: ((y + 0.5) * rect.height) / canvas.height,
     }));
   });
 }
@@ -116,7 +131,7 @@ test('carrega os dados reais, explora, interpola, treina, para e recria', async 
   await expect(page.locator('#latentInfo')).toContainText('Saída do decoder');
   await page.locator('#interpolateModeBtn').click();
   await page.locator('#embeddingCanvas').click({ position: points[0] });
-  await page.locator('#embeddingCanvas').click({ position: points[5] });
+  await page.locator('#embeddingCanvas').click({ position: points[1] });
   await expect(page.locator('#interpSlider')).toBeEnabled();
   await expect(page.locator('#interpWeight')).toHaveText('A 50%  •  B 50%');
   await page.locator('#interpSlider').fill('25');
